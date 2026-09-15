@@ -1,0 +1,120 @@
+CREATE DATABASE IF NOT EXISTS fluxdrive CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+USE fluxdrive;
+
+CREATE TABLE users (
+ id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+ full_name VARCHAR(120) NOT NULL,
+ username VARCHAR(50) NOT NULL UNIQUE,
+ email VARCHAR(190) NOT NULL UNIQUE,
+ password VARCHAR(255) NULL,
+ google_id VARCHAR(190) NULL UNIQUE,
+ profile_picture VARCHAR(500) NULL,
+ auth_provider ENUM('local','google') NOT NULL DEFAULT 'local',
+ created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
+CREATE TABLE folders (
+ id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+ user_id INT UNSIGNED NOT NULL,
+ parent_id INT UNSIGNED NULL,
+ folder_name VARCHAR(255) NOT NULL,
+ created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+ INDEX idx_folders_user_parent (user_id,parent_id),
+ CONSTRAINT fk_folders_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+ CONSTRAINT fk_folders_parent FOREIGN KEY (parent_id) REFERENCES folders(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE files (
+ id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+ user_id INT UNSIGNED NOT NULL,
+ folder_id INT UNSIGNED NOT NULL,
+ file_name VARCHAR(255) NOT NULL,
+ s3_key VARCHAR(1024) NOT NULL UNIQUE,
+ mime_type VARCHAR(255) NOT NULL,
+ file_size BIGINT UNSIGNED NOT NULL,
+ file_extension VARCHAR(50) NULL,
+ is_starred TINYINT(1) NOT NULL DEFAULT 0,
+ is_deleted TINYINT(1) NOT NULL DEFAULT 0,
+ created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+ deleted_at TIMESTAMP NULL,
+ INDEX idx_files_user_folder (user_id,folder_id,is_deleted),
+ INDEX idx_files_user_name (user_id,file_name),
+ CONSTRAINT fk_files_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+ CONSTRAINT fk_files_folder FOREIGN KEY (folder_id) REFERENCES folders(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE shares (
+ id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+ user_id INT UNSIGNED NOT NULL,
+ file_id BIGINT UNSIGNED NOT NULL,
+ token VARCHAR(128) NOT NULL UNIQUE,
+ permission ENUM('view','view_download') NOT NULL DEFAULT 'view_download',
+ expires_at TIMESTAMP NULL,
+ revoked_at TIMESTAMP NULL,
+ created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ INDEX idx_shares_user_file (user_id,file_id),
+ CONSTRAINT fk_shares_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+ CONSTRAINT fk_shares_file FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE activities (
+ id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+ user_id INT UNSIGNED NOT NULL,
+ action VARCHAR(50) NOT NULL,
+ file_id BIGINT UNSIGNED NULL,
+ folder_id INT UNSIGNED NULL,
+ description VARCHAR(500) NOT NULL,
+ created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ INDEX idx_activities_user_date (user_id,created_at),
+ CONSTRAINT fk_activities_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+ CONSTRAINT fk_activities_file FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE SET NULL,
+ CONSTRAINT fk_activities_folder FOREIGN KEY (folder_id) REFERENCES folders(id) ON DELETE SET NULL
+) ENGINE=InnoDB;
+
+CREATE TABLE sessions (
+ id VARCHAR(128) PRIMARY KEY,
+ user_id INT UNSIGNED NULL,
+ ip_address VARCHAR(45) NULL,
+ user_agent VARCHAR(500) NULL,
+ last_activity TIMESTAMP NULL,
+ INDEX idx_sessions_user(user_id),
+ CONSTRAINT fk_sessions_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE password_resets (
+ id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+ user_id INT UNSIGNED NOT NULL,
+ token_hash CHAR(64) NOT NULL,
+ expires_at TIMESTAMP NOT NULL,
+ used_at TIMESTAMP NULL,
+ created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ INDEX idx_password_reset_token(token_hash),
+ CONSTRAINT fk_password_resets_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE storage_usage (
+ id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+ user_id INT UNSIGNED NOT NULL UNIQUE,
+ used_bytes BIGINT UNSIGNED NOT NULL DEFAULT 0,
+ updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+ CONSTRAINT fk_storage_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE notifications (
+ id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+ user_id INT UNSIGNED NOT NULL,
+ type VARCHAR(50) NOT NULL,
+ message VARCHAR(500) NOT NULL,
+ is_read TINYINT(1) NOT NULL DEFAULT 0,
+ created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ INDEX idx_notifications_user_date (user_id,created_at),
+ CONSTRAINT fk_notifications_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE OR REPLACE VIEW user_storage AS
+SELECT u.id AS user_id, COALESCE(SUM(CASE WHEN f.is_deleted=0 THEN f.file_size ELSE 0 END),0) AS used_bytes,
+       COUNT(CASE WHEN f.is_deleted=0 THEN f.id END) AS file_count
+FROM users u LEFT JOIN files f ON f.user_id=u.id GROUP BY u.id;
